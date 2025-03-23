@@ -1,0 +1,259 @@
+---
+title: "R Notebook ACM CAH type de lecteurs"
+output:
+  html_document:
+    df_print: paged
+---
+
+Tout d'abord chargeons les packages utiles
+```{r}
+library(FactoMineR)
+library(missMDA)
+library(dplyr)
+library(tidyverse)
+library(tidyr)
+library(explor)
+library(factoextra)
+library(ggplot2)
+library(questionr)
+library(gt)
+library(explor)
+library(gridExtra)
+library(RColorBrewer)
+display.brewer.all(colorblindFriendly = TRUE)
+```
+
+Construisons notre extrait de base de données avec les variables utiles pour l'ACM
+```{r}
+resacm2 <- bddpond %>%
+  select(CLASS_univprat_name, CRITAGE, SEXE, DIPLOMrecodebis,62:74, 77, 
+         nb_livres_lus_4cl, freq_bibmed_rec, lire_autre_langue, manque_livre, 
+         Supports, div_genre_rec) %>%
+  rename(
+    AGE = CRITAGE,
+    Univ_pratiques = CLASS_univprat_name,
+    Diplome = DIPLOMrecodebis,
+    nb_livres_lus = nb_livres_lus_4cl,
+    freq_biblio = freq_bibmed_rec,
+    nb_genres_lus = div_genre_rec
+  ) %>%
+  mutate(across(c(Diplome, lire_autre_langue), as.character)) %>%
+  mutate(across(c(Diplome, lire_autre_langue), ~ na_if(.x, "REF"))) %>%
+  mutate(across(c(Diplome, freq_biblio, lire_autre_langue), ~ na_if(.x, "NSP"))) %>%
+  mutate(
+    lire_autre_langue = replace_na(lire_autre_langue, "Non"),
+    manque_livre = replace_na(manque_livre, "Non"),
+  ) %>%
+  mutate(across(5:18, ~ replace_na(.x, 0))) %>%
+  mutate(across(5:18, ~ case_when(
+    .x == 0 ~ "Non",
+    .x == 1 ~ "Oui",
+    TRUE ~ as.character(.x)
+  ))) %>%
+  filter(!is.na(Diplome) & !is.na(freq_biblio)) %>%
+  mutate(across(everything(), as.factor))
+```
+
+Executons l'ACM. Les 4 premières variables et la dernière sont placées en variables supplémentaires illustratives
+```{r}
+res.MCA <- MCA(resacm2, quali.sup = c(1,2,3,4,24), graph = FALSE)
+```
+
+observons les valeurs propres
+```{r}
+summary(res.MCA)
+
+fviz_screeplot(res.MCA, addlabels = TRUE, ylim = c(0, 30), title = "Décomposition de l'inertie totale")
+```
+Observons les coordonnées, les contributions et les cos2 des variables actives sur les premières dimensions de l'ACM
+```{r}
+res.MCA$var$coord
+res.MCA$var$contrib
+res.MCA$var$cos2
+```
+Enfin, décrivons les axes. Pour chacun des 3 premiers axes, on peut observer le lien entre l'axe et les variables et entre l'axe et les modalités.
+```{r}
+dimdesc(res.MCA)
+```
+
+Représentations graphiques
+
+Représentons tout d'abord le nuage des individus en fonction de la qualité de leur représentation (cos2) sur la première dimension
+```{r}
+# Sélectionner une palette de couleur adaptée aux daltoniens
+palette_cblind <- brewer.pal(4, "Paired")  
+
+# Récupérer le cos² des individus
+cos2_ind <- res.MCA$ind$cos2[, 1]  # Cos2 sur la première dimension
+
+# Définir  les catégories de cos2 pour la légende
+breaks_cos2 <- c(0, 0.02, 0.09, 0.86, 1)  
+labels_cos2 <- c("< 0.02", "< 0.09", "<= 0.86", "> 0.86")  # étiquette dans la légende
+
+# Catégoriser les individus selon ces seuils
+cos2_classes <- cut(cos2_ind, breaks = breaks_cos2, include.lowest = TRUE, labels = labels_cos2)
+
+# Graphique 
+fviz_mca_ind(res.MCA, 
+             label = "none", 
+             habillage = cos2_classes,  # Coloration des points selon les classes de cos²
+             addEllipses = FALSE, 
+             pointsize = 2) +
+  scale_color_manual(values = palette_cblind, name = "cos²") +  # Applique les couleurs aux classes
+  labs(title = "Graphe des individus - Coloration par cos² sur Dim1") +
+  theme_minimal()
+
+```
+
+On peut représenter le nuage des individus en fonction des modalités des 5 variables illustratives
+```{r}
+# on crée une liste des variables supplémentaires
+quali_sup_indices <- c(1, 2, 3, 4, 24)
+
+#on applique successivement à chaque variable supplémentaire le code du graphique grâce à une fonction
+plots <- lapply(quali_sup_indices, function(i) {
+  fviz_mca_ind(res.MCA, label = "none", habillage = i,axes=c(1,2), addEllipses = TRUE, 
+               palette = "Dark2", title = paste("Projection des individus -", colnames(resacm2)[i])) #on utilise le nom des variables pour identifier chacun des futures graphiques
+})
+
+# On affiche les 5 graphiques en même temps (grâce à gridExtra)
+library(gridExtra)
+do.call(grid.arrange, c(plots, ncol = 2))  # affichage en 2 colonnes (l'affichage est plus "propre" en executant dans la console de Rstudio)
+```
+
+La librairie explor est utiliser pour visualiser les différents graphs, dont celui des modalités
+```{r}
+explor(res.MCA)
+```
+
+On peut placer les labels dans explor et en récuperer les coordonnées sur le plan afin de l'insérer dans notre code. On peut alors générer le graph des modalités. 
+```{r}
+#recuperer la position des labels
+res <- explor::prepare_results(res.MCA)
+
+label_df_supp<-read.csv("C:/ad.univ-lille.fr/Personnels/Homedir1/4273/Documents/Cours 2024-2025/Master 1 ENSP travail R/AGD/AGD/position_labels_ACM_supp.csv", sep=",", header=TRUE)
+
+label_df_supp <- label_df_supp[label_df_supp$lab %in% rownames(res$var$coord), ]
+
+# Fusionner les coordonnées avec res$var
+res$var$coord[rownames(res$var$coord) %in% label_df_supp$lab, "Dim 1"] <- label_df_supp$lab_x
+res$var$coord[rownames(res$var$coord) %in% label_df_supp$lab, "Dim 2"] <- label_df_supp$lab_y
+
+
+explor::MCA_var_plot(res, xax = 1, yax = 2, var_sup = TRUE, var_sup_choice = c("Univ_pratiques",
+                                                                               "AGE", "SEXE", "Diplome", "nb_genres_lus"), var_lab_min_contrib = 0, col_var = "Type",
+                     symbol_var = "Variable", size_var = "Contrib", size_range = c(52.5, 700), #on utilise la contribution pour définir la taille des points pour les modalités actives
+                     labels_size = 10, point_size = 56, transitions = TRUE, labels_positions = "auto",
+                     labels_prepend_var = FALSE, xlim = c(-2.28, 2.35), ylim = c(-1.45, 3.19))
+
+#la console indique un Avis relatif à des valeurs manquantes puisque par définition il n'y a pas de contribution pour les variables illustratives (elles n'ont pas contribué à la construction des axes)
+
+```
+
+On peut également représenter le graph des variables
+```{r}
+plot.MCA(res.MCA, choix='var',title="Graphe des variables")
+```
+
+Procédons maintenant à la CAH. La construction se fait sur les 13 premières dimensions (plus de 75% de l'inertie).
+
+```{r}
+res.MCA<-MCA(resacm2,ncp=13,quali.sup=c(1,2,3,4,24),graph=FALSE)
+```
+
+Observons les gains d'inertie pour pouvoir choisir le nombre de classes que nous voulons contruire
+```{r}
+inertie_gains <- res.HCPC$call$t$inert.gain
+
+# Afficher les 10 premiers gains d'inertie
+(inertie_gains_10 <- inertie_gains[1:10]) 
+
+# Création du diagramme en barres des 10 premiers gains d'inertie
+barplot(
+  inertie_gains_10,
+  names.arg = 1:10,
+  col = "blue",
+  main = "Gains d'inertie",
+  xlab = "Étapes de fusion",
+  ylab = "Gains d'inertie",
+  border = "black"
+)
+```
+L'observation des valeurs nous indique que le passage d'un groupement en 4 classes à 5 classes entrâine un saut d'inertie. On gardera donc 4 classes.
+
+On peut maintenant faire la CAH en 4 classes que l'on consolidera avec la méthode des K-means
+```{r}
+res.HCPC<-HCPC(res.MCA,nb.clust=4,consol=TRUE,graph=FALSE) 
+```
+
+Les résultats sont visibles dans le dendrogramme
+```{r}
+plot.HCPC(res.HCPC,choice='tree',title='Dendrogramme (arbre hiérarchique)')
+```
+
+4 clusters sont créés et on peut représenter le nuage des individus en fonction de leur appartenance aux clusters
+```{r}
+plot.HCPC(res.HCPC,choice='map',draw.tree=FALSE,label="none",title="Nuage des individus - représentation par cluster")
+```
+
+On peut, si on le souhaite, ajouter les modalités des variables illustratives sur ce graph (mais cela donne un rendu trop chargé pour être vraiment lisible)
+```{r}
+plot.HCPC(res.HCPC,choice='map',draw.tree=FALSE,label="none",title="")
+
+# On extrait les coordonnées des variables supplémentaires depuis res.MCA
+points(res.MCA$quali.sup$coord[, 1], 
+       res.MCA$quali.sup$coord[, 2], 
+       col = "blue", 
+       pch = 17, 
+       cex = 1.5)
+
+# Ajouter les noms des variables supplémentaires
+text(res.MCA$quali.sup$coord[, 1], 
+     res.MCA$quali.sup$coord[, 2], 
+     labels = rownames(res.MCA$quali.sup$coord), 
+     col = "blue", 
+     pos = 3,
+     cex=0.7)#même en diminuant la taille de al police (cex) ou en changeant la couleur (col), le résultat est peu lisible
+```
+
+
+Enfin, on peut représenter le dendrogramme sur le nuage des individus
+```{r}
+plot.HCPC(res.HCPC,choice='3D.map',ind.names=FALSE,centers.plot=FALSE,angle=60,title='Arbre hiérarchique sur le plan factoriel')
+```
+
+Il nous reste à décrire les différentes classes.
+
+Pour cela on peut faire apparaitre les parangons (les individus les plus proches des barycentres des classes) et les individus spécifiques (les plus éloignés des barycentres des autres classes)
+
+```{r}
+res.HCPC[["desc.ind"]][["para"]] 
+
+res.HCPC[["desc.ind"]][["dist"]]
+```
+L'ensemble des valeurs qu'il faut analyser pour caractériser les classes sont accessibles
+```{r}
+summary(res.HCPC)
+
+```
+
+Dans res.HPCP on peut avoir accès à toutes les données utiles pour l'analyse et notamment:
+
+-les liens entre les dimensions de l'ACM et la classification (les Eta2 nous donnent les rapports de correlation. On s'aperçoit que seuls les 3 premiers axes sont raiment reliés à la CAH)
+```{r}
+res.HCPC[["desc.axes"]][["quanti.var"]]
+```
+
+-le lien entre les cluster et les variables 
+-le lien entre les modalités et les variables (on regardera la p-value et la valeur test puis, si cela est concluant, on pourra comparer la distribution de la modalité dans le cluster par rapport à sa distribution dans l'ensemble es individus)
+
+```{r}
+res.HCPC$desc.var
+
+```
+
+
+
+
+
+
