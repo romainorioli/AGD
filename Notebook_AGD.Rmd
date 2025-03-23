@@ -121,7 +121,7 @@ library(gridExtra)
 do.call(grid.arrange, c(plots, ncol = 2))  # affichage en 2 colonnes (l'affichage est plus "propre" en executant dans la console de Rstudio)
 ```
 
-La librairie explor est utiliser pour visualiser les différents graphs, dont celui des modalités
+La librairie explor est utilisée pour visualiser les différents graphs, dont celui des modalités
 ```{r}
 explor(res.MCA)
 ```
